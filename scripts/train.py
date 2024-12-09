@@ -3,8 +3,9 @@
 import sys
 import os
 
-# Without this project won't work, not sure what the proper fix is
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# The file won't work without this. Not sure what the proper fix would be
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(project_root)
 
 import numpy as np
 import pickle
@@ -12,7 +13,6 @@ import argparse
 from models.rbm import RBM
 from load_data import MnistDataloader
 import logging
-import matplotlib.pyplot as plt
 
 def setup_logging(log_file='training.log'):
     """
@@ -45,7 +45,7 @@ def parse_arguments():
     parser.add_argument('--is_binary', type=bool, default=True, help='Use binary visible units if True, else real-valued')
     parser.add_argument('--n_hidden', type=int, default=64, help='Number of hidden units')
     parser.add_argument('--batch_size', type=int, default=64, help='Mini-batch size for training')
-    parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
+    parser.add_argument('--epochs', type=int, default=5, help='Number of training epochs')
     parser.add_argument('--early_stop', type=int, default=5, help='Early stopping patience')
     parser.add_argument('--train_split', type=float, default=0.9, help='Proportion of training data for training vs validation')
     return parser.parse_args(args=[])
@@ -71,8 +71,6 @@ def load_data(is_binary, train_split=0.9):
     - tuple: (train_data, train_labels), (val_data, val_labels), (test_data, test_labels)
     """
     # Define file paths
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
     base_path = os.path.join(project_root, 'data', 'raw')
     
     training_images_filepath = os.path.join(base_path, 'train-images.idx3-ubyte')
@@ -99,7 +97,7 @@ def load_data(is_binary, train_split=0.9):
     
     return (x_train, y_train), (x_val, y_val), (x_test, y_test)
 
-def train_rbm(rbm, data, epochs, batch_size, early_stop, logger):
+def train_rbm(rbm, data, epochs, batch_size, early_stop, logger, saved_models_dir):
     """
     Train the RBM using Contrastive Divergence.
     
@@ -110,6 +108,7 @@ def train_rbm(rbm, data, epochs, batch_size, early_stop, logger):
     - batch_size (int): Size of each mini-batch.
     - early_stop (int): Patience for early stopping.
     - logger (logging.Logger): Logger instance.
+    - saved_models_dir (str): Directory path to save models.
     
     Returns:
     - RBM: Trained RBM model.
@@ -119,9 +118,6 @@ def train_rbm(rbm, data, epochs, batch_size, early_stop, logger):
     num_batches = num_samples // batch_size
     best_val_error = float('inf')
     patience_counter = 0
-    
-    # Ensure 'saved_models' directory exists
-    ensure_directory('saved_models')
     
     for epoch in range(1, epochs + 1):
         # Shuffle training data
@@ -133,7 +129,7 @@ def train_rbm(rbm, data, epochs, batch_size, early_stop, logger):
         
         for batch_idx in range(num_batches):
             batch = x_train_shuffled[batch_idx * batch_size : (batch_idx + 1) * batch_size]
-            rbm.contrastive_divergence(batch)
+            rbm.contrastive_divergence(batch)  # No k argument
             reconstructed = rbm.reconstruct(batch)
             batch_error = np.mean((batch - reconstructed) ** 2)
             epoch_error += batch_error
@@ -151,23 +147,23 @@ def train_rbm(rbm, data, epochs, batch_size, early_stop, logger):
             best_val_error = val_error
             patience_counter = 0
             # Save the best model
-            best_model_path = os.path.join('saved_models', 'rbm_best_model.pkl')
+            best_model_path = os.path.join(saved_models_dir, 'rbm_best_model.pkl')
             with open(best_model_path, 'wb') as f:
                 pickle.dump({
                     'weights': rbm.get_weights(),
                     'visible_bias': rbm.get_visible_bias(),
                     'hidden_bias': rbm.get_hidden_bias()
                 }, f)
-            logger.info("Validation error improved. Model saved.")
+            logger.info("Validation error improved. Best model saved.")
         else:
             patience_counter += 1
-            logger.info(f"No improvement in validation error for {patience_counter} epochs.")
+            logger.info(f"No improvement in validation error for {patience_counter} epoch(s).")
             if patience_counter >= early_stop:
                 logger.info("Early stopping triggered.")
                 break
     
     # Load the best model
-    best_model_path = os.path.join('saved_models', 'rbm_best_model.pkl')
+    best_model_path = os.path.join(saved_models_dir, 'rbm_best_model.pkl')
     with open(best_model_path, 'rb') as f:
         model_data = pickle.load(f)
         rbm.set_weights(model_data['weights'])
@@ -210,9 +206,13 @@ def main():
         batch_size=args.batch_size
     )
     logger.info("RBM initialized.")
+    
+    # Define the path for saving models at the project root
+    saved_models_dir = os.path.join(project_root, 'saved_models')
+    ensure_directory(saved_models_dir)
 
     # Train RBM
-    rbm = train_rbm(rbm, data, args.epochs, args.batch_size, args.early_stop, logger)
+    rbm = train_rbm(rbm, data, args.epochs, args.batch_size, args.early_stop, logger, saved_models_dir)
     logger.info("RBM Training Completed.")
 
     # Evaluate on Test Set
@@ -221,14 +221,14 @@ def main():
     logger.info(f"Test Reconstruction Error: {test_reconstruction_error:.4f}")
 
     # Save the final model
-    final_model_path = os.path.join('saved_models', 'rbm_final_model.pkl')
+    final_model_path = os.path.join(saved_models_dir, 'rbm_final_model.pkl')
     with open(final_model_path, 'wb') as f:
         pickle.dump({
             'weights': rbm.get_weights(),
             'visible_bias': rbm.get_visible_bias(),
             'hidden_bias': rbm.get_hidden_bias()
         }, f)
-    logger.info("Final model saved to 'saved_models/rbm_final_model.pkl'.")
+    logger.info(f"Final model saved to '{final_model_path}'.")
 
 if __name__ == "__main__":
     main()
