@@ -2,147 +2,92 @@
 
 import sys
 import os
+import numpy as np
+import pickle
+import logging
+from itertools import product
 
-# The file won't work without this. Not sure what the proper fix would be
+# Define project root
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
-import numpy as np
-import pickle
-import argparse
 from models.rbm import RBM
 from load_data import MnistDataloader
-import logging
+from utils import setup_logging, ensure_directory
 
-def setup_logging(log_file='training.log'):
-    """
-    Configure logging to output to both console and a file.
-    
-    Parameters:
-    - log_file (str): Path to the log file.
-    """
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
-    )
+# Core hyperparameters
+LEARNING_RATE = 0.1
+MOMENTUM = 0.5
+WEIGHT_DECAY = 0.0002
+K = 1
+IS_BINARY = True
+N_HIDDEN = 64
+BATCH_SIZE = 64
+EPOCHS = 1
+EARLY_STOP = 5
+TRAIN_SPLIT = 0.9
 
-def parse_arguments():
-    """
-    Parse command-line arguments for hyperparameters.
-    
-    Returns:
-    - argparse.Namespace: Parsed arguments.
-    """
-    parser = argparse.ArgumentParser(description='Train RBM on MNIST Dataset')
-    parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate for weight updates')
-    parser.add_argument('--momentum', type=float, default=0.5, help='Momentum for weight updates')
-    parser.add_argument('--weight_decay', type=float, default=0.0002, help='Weight decay (L2 regularization)')
-    parser.add_argument('--k', type=int, default=1, help='Number of Gibbs sampling steps')
-    parser.add_argument('--is_binary', type=bool, default=True, help='Use binary visible units if True, else real-valued')
-    parser.add_argument('--n_hidden', type=int, default=64, help='Number of hidden units')
-    parser.add_argument('--batch_size', type=int, default=64, help='Mini-batch size for training')
-    parser.add_argument('--epochs', type=int, default=5, help='Number of training epochs')
-    parser.add_argument('--early_stop', type=int, default=5, help='Early stopping patience')
-    parser.add_argument('--train_split', type=float, default=0.9, help='Proportion of training data for training vs validation')
-    return parser.parse_args(args=[])
+HYPEROPT = True
 
-def ensure_directory(path):
-    """
-    Ensure that a directory exists. If not, create it.
-    
-    Parameters:
-    - path (str): Path to the directory.
-    """
-    os.makedirs(path, exist_ok=True)
+# Model save path
+MODEL_SAVE_PATH = 'saved_models/rbm_final_model.pkl'
+
 
 def load_data(is_binary, train_split=0.9):
     """
     Load and split the MNIST dataset into training and validation sets.
-    
-    Parameters:
-    - is_binary (bool): Whether to preprocess data as binary.
-    - train_split (float): Proportion of data to use for training.
-    
-    Returns:
-    - tuple: (train_data, train_labels), (val_data, val_labels), (test_data, test_labels)
     """
-    # Define file paths
     base_path = os.path.join(project_root, 'data', 'raw')
-    
+
     training_images_filepath = os.path.join(base_path, 'train-images.idx3-ubyte')
     training_labels_filepath = os.path.join(base_path, 'train-labels.idx1-ubyte')
     test_images_filepath = os.path.join(base_path, 't10k-images.idx3-ubyte')
     test_labels_filepath = os.path.join(base_path, 't10k-labels.idx1-ubyte')
-    
-    # Initialize data loader
+
+    validation_split = 1 - train_split
     data_loader = MnistDataloader(
-        training_images_filepath,
-        training_labels_filepath,
-        test_images_filepath,
-        test_labels_filepath,
-        is_binary=is_binary
+        training_images_filepath=training_images_filepath,
+        training_labels_filepath=training_labels_filepath,
+        test_images_filepath=test_images_filepath,
+        test_labels_filepath=test_labels_filepath,
+        is_binary=is_binary,
+        validation_split=validation_split
     )
-    
-    # Load data
-    (x_train_full, y_train_full), (x_test, y_test) = data_loader.load_data()
-    
-    # Split into training and validation
-    split_idx = int(train_split * x_train_full.shape[0])
-    x_train, y_train = x_train_full[:split_idx], y_train_full[:split_idx]
-    x_val, y_val = x_train_full[split_idx:], y_train_full[split_idx:]
-    
-    return (x_train, y_train), (x_val, y_val), (x_test, y_test)
+
+    return data_loader.load_data()
 
 def train_rbm(rbm, data, epochs, batch_size, early_stop, logger, saved_models_dir):
     """
     Train the RBM using Contrastive Divergence.
-    
-    Parameters:
-    - rbm (RBM): The RBM model instance.
-    - data (tuple): (train_data, train_labels), (val_data, val_labels), (test_data, test_labels)
-    - epochs (int): Number of training epochs.
-    - batch_size (int): Size of each mini-batch.
-    - early_stop (int): Patience for early stopping.
-    - logger (logging.Logger): Logger instance.
-    - saved_models_dir (str): Directory path to save models.
-    
-    Returns:
-    - RBM: Trained RBM model.
     """
     (x_train, y_train), (x_val, y_val), _ = data
     num_samples = x_train.shape[0]
     num_batches = num_samples // batch_size
     best_val_error = float('inf')
     patience_counter = 0
-    
+
     for epoch in range(1, epochs + 1):
-        # Shuffle training data
         permutation = np.random.permutation(num_samples)
         x_train_shuffled = x_train[permutation]
-        y_train_shuffled = y_train[permutation]
-        
+
         epoch_error = 0.0
-        
+
         for batch_idx in range(num_batches):
             batch = x_train_shuffled[batch_idx * batch_size : (batch_idx + 1) * batch_size]
-            rbm.contrastive_divergence(batch)  # No k argument
+            rbm.contrastive_divergence(batch)
             reconstructed = rbm.reconstruct(batch)
             batch_error = np.mean((batch - reconstructed) ** 2)
             epoch_error += batch_error
-        
+
         avg_epoch_error = epoch_error / num_batches
-        
+
         # Validate
         reconstructed_val = rbm.reconstruct(x_val)
         val_error = np.mean((x_val - reconstructed_val) ** 2)
-        
+
         logger.info(f"Epoch {epoch}/{epochs} - Training Error: {avg_epoch_error:.4f} - Validation Error: {val_error:.4f}")
-        
-        # Early Stopping Check
+
+        # Early Stopping
         if val_error < best_val_error:
             best_val_error = val_error
             patience_counter = 0
@@ -154,65 +99,115 @@ def train_rbm(rbm, data, epochs, batch_size, early_stop, logger, saved_models_di
                     'visible_bias': rbm.get_visible_bias(),
                     'hidden_bias': rbm.get_hidden_bias()
                 }, f)
-            logger.info("Validation error improved. Best model saved.")
         else:
             patience_counter += 1
-            logger.info(f"No improvement in validation error for {patience_counter} epoch(s).")
             if patience_counter >= early_stop:
                 logger.info("Early stopping triggered.")
                 break
-    
+
     # Load the best model
     best_model_path = os.path.join(saved_models_dir, 'rbm_best_model.pkl')
     with open(best_model_path, 'rb') as f:
         model_data = pickle.load(f)
-        rbm.set_weights(model_data['weights'])
-        rbm.set_visible_bias(model_data['visible_bias'])
-        rbm.set_hidden_bias(model_data['hidden_bias'])
-    
-    return rbm
+    rbm.set_weights(model_data['weights'])
+    rbm.set_visible_bias(model_data['visible_bias'])
+    rbm.set_hidden_bias(model_data['hidden_bias'])
+
+    return rbm, best_val_error
+
+def hyperparameter_search(data, logger, saved_models_dir):
+    """
+    Perform a simple hyperparameter search to find the best combination.
+    We'll do a small grid search over a few parameters.
+    """
+    # Define search space (keep it manageable)
+    learning_rates = [0.01, 0.05, 0.1]
+    momenta = [0.5, 0.9]
+    weight_decays = [0.0002, 0.0001]
+    ks = [1, 3]
+    n_hiddens = [64, 128]
+
+    best_config = None
+    best_val_error = float('inf')
+
+    for lr, mom, wd, k_val, nh in product(learning_rates, momenta, weight_decays, ks, n_hiddens):
+        logger.info(f"Testing config: LR={lr}, MOM={mom}, WD={wd}, k={k_val}, n_hidden={nh}")
+
+        rbm = RBM(
+            n_visible=data[0][0].shape[1],
+            n_hidden=nh,
+            learning_rate=lr,
+            momentum=mom,
+            weight_decay=wd,
+            use_pcd=False,
+            k=k_val,
+            visible_type='binary' if IS_BINARY else 'real',
+            batch_size=BATCH_SIZE
+        )
+
+        _, val_error = train_rbm(rbm, data, EPOCHS, BATCH_SIZE, EARLY_STOP, logger, saved_models_dir)
+
+        if val_error < best_val_error:
+            best_val_error = val_error
+            best_config = (lr, mom, wd, k_val, nh)
+            logger.info(f"New best config: LR={lr}, MOM={mom}, WD={wd}, k={k_val}, n_hidden={nh}, Val Error={val_error:.4f}")
+
+    logger.info(f"Best config found: LR={best_config[0]}, MOM={best_config[1]}, WD={best_config[2]}, k={best_config[3]}, n_hidden={best_config[4]} with Val Error={best_val_error:.4f}")
+    return best_config
 
 def main():
-    # Parse arguments
-    args = parse_arguments()
-
     # Setup logging
-    setup_logging()
+    setup_logging(log_file='training.log', project_root=project_root)
     logger = logging.getLogger(__name__)
 
     logger.info("RBM Training Started.")
-    logger.info(f"Hyperparameters: Learning Rate={args.learning_rate}, Momentum={args.momentum}, "
-                f"Weight Decay={args.weight_decay}, k={args.k}, is_binary={args.is_binary}, "
-                f"n_hidden={args.n_hidden}, Batch Size={args.batch_size}, Epochs={args.epochs}, "
-                f"Early Stop={args.early_stop}")
-    
+    logger.info("Hyperparameters:")
+    logger.info(f"LEARNING_RATE={LEARNING_RATE}, MOMENTUM={MOMENTUM}, WEIGHT_DECAY={WEIGHT_DECAY}, k={K}, "
+                f"IS_BINARY={IS_BINARY}, N_HIDDEN={N_HIDDEN}, BATCH_SIZE={BATCH_SIZE}, EPOCHS={EPOCHS}, "
+                f"EARLY_STOP={EARLY_STOP}, TRAIN_SPLIT={TRAIN_SPLIT}, HYPEROPT={HYPEROPT}")
+
     # Load data
-    data = load_data(is_binary=args.is_binary, train_split=args.train_split)
+    data = load_data(is_binary=IS_BINARY, train_split=TRAIN_SPLIT)
     (x_train, y_train), (x_val, y_val), (x_test, y_test) = data
     logger.info(f"Training Set Size: {x_train.shape[0]}")
     logger.info(f"Validation Set Size: {x_val.shape[0]}")
     logger.info(f"Test Set Size: {x_test.shape[0]}")
 
-    # Initialize RBM
-    rbm = RBM(
-        n_visible=x_train.shape[1],
-        n_hidden=args.n_hidden,
-        learning_rate=args.learning_rate,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-        use_pcd=False,
-        k=args.k,
-        visible_type='binary' if args.is_binary else 'real',
-        batch_size=args.batch_size
-    )
-    logger.info("RBM initialized.")
-    
     # Define the path for saving models at the project root
     saved_models_dir = os.path.join(project_root, 'saved_models')
     ensure_directory(saved_models_dir)
 
+    current_lr = LEARNING_RATE
+    current_momentum = MOMENTUM
+    current_weight_decay = WEIGHT_DECAY
+    current_k = K
+    current_n_hidden = N_HIDDEN
+
+    if HYPEROPT:
+        # Perform hyperparameter search
+        best_config = hyperparameter_search(data, logger, saved_models_dir)
+        current_lr = best_config[0]
+        current_momentum = best_config[1]
+        current_weight_decay = best_config[2]
+        current_k = best_config[3]
+        current_n_hidden = best_config[4]
+
+    # Initialize RBM with chosen hyperparameters
+    rbm = RBM(
+        n_visible=x_train.shape[1],
+        n_hidden=current_n_hidden,
+        learning_rate=current_lr,
+        momentum=current_momentum,
+        weight_decay=current_weight_decay,
+        use_pcd=False,
+        k=current_k,
+        visible_type='binary' if IS_BINARY else 'real',
+        batch_size=BATCH_SIZE
+    )
+    logger.info("RBM initialized with final hyperparameters.")
+
     # Train RBM
-    rbm = train_rbm(rbm, data, args.epochs, args.batch_size, args.early_stop, logger, saved_models_dir)
+    rbm, val_error = train_rbm(rbm, data, EPOCHS, BATCH_SIZE, EARLY_STOP, logger, saved_models_dir)
     logger.info("RBM Training Completed.")
 
     # Evaluate on Test Set
@@ -220,15 +215,19 @@ def main():
     test_reconstruction_error = np.mean((x_test - reconstructed_test) ** 2)
     logger.info(f"Test Reconstruction Error: {test_reconstruction_error:.4f}")
 
+    # Ensure directory for final model
+    final_model_dir = os.path.dirname(MODEL_SAVE_PATH)
+    if final_model_dir and not os.path.exists(final_model_dir):
+        ensure_directory(final_model_dir)
+
     # Save the final model
-    final_model_path = os.path.join(saved_models_dir, 'rbm_final_model.pkl')
-    with open(final_model_path, 'wb') as f:
+    with open(MODEL_SAVE_PATH, 'wb') as f:
         pickle.dump({
             'weights': rbm.get_weights(),
             'visible_bias': rbm.get_visible_bias(),
             'hidden_bias': rbm.get_hidden_bias()
         }, f)
-    logger.info(f"Final model saved to '{final_model_path}'.")
+    logger.info(f"Final model saved to '{MODEL_SAVE_PATH}'.")
 
 if __name__ == "__main__":
     main()

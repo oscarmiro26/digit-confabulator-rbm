@@ -1,52 +1,56 @@
 # scripts/utils.py
 
-import numpy as np
+import os
+import pickle
+import logging
+from models.rbm import RBM
 
-def binarize_data(data, threshold=127):
+def setup_logging(log_file, project_root):
     """
-    Binarize the data based on a threshold.
-
+    Configure logging to output to both console and a file.
+    
     Parameters:
-    - data (np.ndarray): Array of shape (num_samples, 784) representing flattened MNIST images.
-    - threshold (int, optional): Pixel value threshold for binarization. Defaults to 127.
-
-    Returns:
-    - np.ndarray: Binarized data with values 0 or 1.
+    - log_file (str): Name of the log file.
+    - project_root (str): Absolute path to the project root directory.
     """
-    return (data > threshold).astype(np.float32)
+    log_path = os.path.join(project_root, log_file)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        handlers=[
+            logging.FileHandler(log_path),
+            logging.StreamHandler()
+        ]
+    )
 
-def normalize_data(data):
+def ensure_directory(path):
     """
-    Normalize the data to the range [0, 1].
-
+    Ensure that a directory exists. If not, create it.
+    
     Parameters:
-    - data (np.ndarray): Array of shape (num_samples, 784) representing flattened MNIST images.
-
-    Returns:
-    - np.ndarray: Normalized data with values between 0 and 1.
+    - path (str): Path to the directory.
     """
-    return data.astype(np.float32) / 255.0
+    os.makedirs(path, exist_ok=True)
 
-def preprocess_data(data, is_binary=True):
+def load_model(model_path, rbm, project_root):
     """
-    Preprocess the data based on the visibility type.
-
+    Load RBM weights and biases from a saved model file.
+    
     Parameters:
-    - data (list of lists or np.ndarray): Raw image data as lists of pixel values.
-    - is_binary (bool, optional): If True, binarize the data; otherwise, normalize it. Defaults to True.
-
-    Returns:
-    - np.ndarray: Preprocessed data ready for RBM training.
+    - model_path (str): Relative path to the saved model file.
+    - rbm (RBM): RBM instance to load parameters into.
+    - project_root (str): Absolute path to the project root directory.
     
     Raises:
-    - ValueError: If `is_binary` is not a boolean.
+    - FileNotFoundError: If the model file does not exist.
     """
-    if not isinstance(is_binary, bool):
-        raise ValueError("is_binary must be a boolean value.")
+    absolute_model_path = os.path.join(project_root, model_path)
     
-    data = np.array(data).astype(np.float32)
-    if is_binary:
-        data = binarize_data(data)
-    else:
-        data = normalize_data(data)
-    return data
+    if not os.path.exists(absolute_model_path):
+        raise FileNotFoundError(f"Model file '{absolute_model_path}' does not exist.")
+    
+    with open(absolute_model_path, 'rb') as f:
+        model_data = pickle.load(f)
+        rbm.set_weights(model_data['weights'])
+        rbm.set_visible_bias(model_data['visible_bias'])
+        rbm.set_hidden_bias(model_data['hidden_bias'])
