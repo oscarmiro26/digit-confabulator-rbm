@@ -4,7 +4,7 @@ import numpy as np
 
 class RBM:
     def __init__(self, n_visible, n_hidden, learning_rate=0.1, momentum=0.5, weight_decay=0.0002, 
-                 use_pcd=True, k=1, visible_type='binary', batch_size=64):
+                 use_pcd=True, k=1, is_binary=True, batch_size=64):
         """
         Initialize the RBM model parameters.
 
@@ -16,7 +16,7 @@ class RBM:
         - weight_decay: Weight decay (L2 regularization)
         - use_pcd: Whether to use Persistent Contrastive Divergence
         - k: Number of Gibbs sampling steps
-        - visible_type: Type of visible units ('binary' or 'real')
+        - is_binary: Type of visible units (true for binary, else real)
         - batch_size: Size of mini-batches for training
         """
         self.n_visible = n_visible
@@ -26,7 +26,7 @@ class RBM:
         self.weight_decay = weight_decay
         self.use_pcd = use_pcd
         self.k = k
-        self.visible_type = visible_type
+        self.is_binary = is_binary
         self.batch_size = batch_size
 
         # Initialize weights using Xavier initialization
@@ -45,6 +45,19 @@ class RBM:
         # Initialize persistent chain for PCD
         if self.use_pcd:
             self.persistent_visible = np.random.binomial(1, 0.5, size=(self.batch_size, self.n_visible)).astype(np.float32)
+
+    def __str__(self):
+        return (
+            f"n_visible = {self.n_visible}\n" +
+            f"n_hidden = {self.n_hidden}\n" +
+            f"lr = {self.learning_rate}\n" +
+            f"momentum = {self.momentum}\n" +
+            f"weight_decay = {self.weight_decay}\n" +
+            f"use_pcd = {self.use_pcd}\n" +
+            f"k = {self.k}\n" +
+            f"is_binary = {self.is_binary}\n" +
+            f"batch_size = {self.batch_size}"
+        )
 
     def sigmoid(self, x):
         """
@@ -98,16 +111,14 @@ class RBM:
         - visible_states: Sampled visible states
         """
         visible_activations = np.dot(hidden, self.weights.T) + self.visible_bias
-        if self.visible_type == 'binary':
+        if self.is_binary is True:
             visible_probs = self.sigmoid(visible_activations)
             visible_states = self.sample_prob(visible_probs)
-        elif self.visible_type == 'real':
+        else:
             # For real-valued visible units, use Gaussian distribution
             # Assuming unit variance for simplicity
             visible_probs = visible_activations  # Mean of Gaussian
             visible_states = visible_activations + np.random.normal(0, 1, size=visible_activations.shape)
-        else:
-            raise ValueError("Unsupported visible_type. Choose 'binary' or 'real'.")
         return visible_probs, visible_states
 
     def contrastive_divergence(self, input_data):

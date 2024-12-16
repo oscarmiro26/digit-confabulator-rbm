@@ -171,8 +171,10 @@ def main():
     # Temporary n_hidden; will be overwritten by loaded model
     rbm = RBM(
         n_visible=n_visible,
-        n_hidden=64,  # Placeholder; actual value from model
-        visible_type='binary' if args.is_binary else 'real',
+        momentum=0.9,
+        n_hidden=128,
+        k=10,
+        is_binary=args.is_binary,
         batch_size=args.batch_size
     )
 
@@ -180,6 +182,8 @@ def main():
     load_model(args.model_path, rbm, project_root)
     n_hidden = rbm.get_weights().shape[1]  # Update n_hidden based on loaded model
     logger.info(f"RBM initialized with {n_visible} visible units and {n_hidden} hidden units.")
+
+    print(rbm)
 
     # Perform evaluation
     evaluate_rbm(

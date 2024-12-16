@@ -23,7 +23,7 @@ K = 1
 IS_BINARY = True
 N_HIDDEN = 64
 BATCH_SIZE = 64
-EPOCHS = 1
+EPOCHS = 50
 EARLY_STOP = 5
 TRAIN_SPLIT = 0.9
 
@@ -120,12 +120,11 @@ def hyperparameter_search(data, logger, saved_models_dir):
     Perform a simple hyperparameter search to find the best combination.
     We'll do a small grid search over a few parameters.
     """
-    # Define search space (keep it manageable)
-    learning_rates = [0.01, 0.05, 0.1]
-    momenta = [0.5, 0.9]
-    weight_decays = [0.0002, 0.0001]
-    ks = [1, 3]
-    n_hiddens = [64, 128]
+    learning_rates = [0.1] # 0.005
+    momenta = [0.9]
+    weight_decays = [0.0001] # 0.0002
+    ks = [10]
+    n_hiddens = [128]
 
     best_config = None
     best_val_error = float('inf')
@@ -141,7 +140,7 @@ def hyperparameter_search(data, logger, saved_models_dir):
             weight_decay=wd,
             use_pcd=False,
             k=k_val,
-            visible_type='binary' if IS_BINARY else 'real',
+            is_binary=IS_BINARY,
             batch_size=BATCH_SIZE
         )
 
@@ -201,7 +200,7 @@ def main():
         weight_decay=current_weight_decay,
         use_pcd=False,
         k=current_k,
-        visible_type='binary' if IS_BINARY else 'real',
+        is_binary=IS_BINARY,
         batch_size=BATCH_SIZE
     )
     logger.info("RBM initialized with final hyperparameters.")
